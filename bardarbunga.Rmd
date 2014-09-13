@@ -1,0 +1,119 @@
+---
+title: "Bárðarbunga activities in a nutshell"
+author: "Einar Hjörleifsson"
+date: "13/09/2014"
+output:
+  html_document:
+    toc: yes
+---
+
+```{r setup, echo=FALSE}
+opts_chunk$set(message=FALSE,
+               tidy=TRUE,
+               tidy.opts=list(width.cutoff=55),
+               pretty=FALSE,
+               echo=FALSE,
+               eval=TRUE,
+               cache=FALSE,
+               cache.path='cache/')
+```
+
+# The required packages
+
+```{r}
+require(ggplot2)
+require(ggmap)
+require(rgdal)
+require(raster)
+```
+# Getting the data
+
+## The background map
+
+The background map is generate from raster objects (see bottom of document):
+
+```{r}
+eldar <- raster("background_map/eldar.img")
+eldar <- rasterToPoints(eldar)
+eldar <- data.frame(eldar)
+colnames(eldar) <- c("x","y","hill")
+eldar$x <- eldar$x/1e3
+eldar$y <- eldar$y/1e3
+
+water <- raster("background_map/water.img")
+water <- rasterToPoints(water)
+water <- data.frame(water)
+water$x <- water$x/1e3
+water$y <- water$y/1e3
+
+eldar_base_plot <- ggplot() +
+  theme_nothing() +
+  geom_raster(data=eldar,aes(x,y,fill=hill)) +
+  geom_raster(data=water,aes(x,y),fill="white",alpha=0.25) +
+  scale_fill_gradientn(colours=grey(1:100/100),guide="none") +
+  coord_equal()
+
+eldar_base_plot
+```
+
+## The earthquakes
+Checked earthquake data reside the [Icelandic Meterological website](http://hraun.vedur.is/ja/viku/). 
+
+First we define a little function, which allows us to read the year we may be interested in as well as the weeks. The function will also convert the long and lat data to kilometers.
+
+```{r, eval=FALSE}
+get_hraun <- function(weeks,year) {
+  i <- weeks < 10
+  weeks[i] <- paste("0",weeks[i],sep="")
+  for (i in 1:length(weeks)) {
+    tmp <- read.table(paste("http://hraun.vedur.is/ja/viku/",year,"/vika_",weeks[i],"/listi",sep=""),
+                      header=TRUE,colClasses=c("integer",rep("character",2),rep("numeric",5)))
+    if(i==1) {
+      x <- tmp
+    } else {
+      x <- rbind(tmp,x)
+    }
+  }
+  names(x) <- c("id","date","time","lat","lon","z","size","ML")
+  x$date <- ymd_hms(paste(x$date,x$time,"UTC"))
+  
+  require(rgdal)
+  #require(rgisland)
+  PRO <- CRS('+proj=longlat +datum=WGS84')
+  ISN94 <- CRS('+proj=lcc +lat_1=64.25 +lat_2=65.75 +lat_0=65 +lon_0=-19 +x_0=500000 +y_0=500000 +ellps=GRS80 +units=m +no_defs')
+  
+  x$id <- 1:nrow(hraun)
+  x.stdf <- SpatialPointsDataFrame(x[,c('lon','lat')],
+                                 x[,c('id','date')],
+                                 proj4string=PRO)
+  x.stdf <- spTransform(x.stdf,ISN94)
+  x.df <- as.data.frame(x.stdf)
+  names(x.df) <- c("id","date","x","y")
+  x <- join(x,x.df[,c("id","x","y")])
+  
+  return(x)
+}
+```
+
+```{r, eval=FALSE}
+haun <- get_hraun(weeks=33:37,year=2014)
+```
+
+
+
+# The background rasters
+
+```{r, eval=FALSE}
+eldar <- raster("/home/einarhj/stasi/gis/LMI/HILLSHADE_LMI_ISN93/hillshade_LMI_isn93.img")
+ext_eldar <- extent(562969.5,613752.8,452149.4,493070.2)
+eldar <- crop(eldar,ext_eldar)
+eldar <- aggregate(eldar,4,mean)
+writeRaster(eldar,file="background_map/eldar.img")
+
+dsn <- "/home/einarhj/stasi/gis/LMI/IS50V_VATNAFAR_01072013_ISN93/IS50V_VATNAFAR_SHP"
+water <- readOGR(dsn,"is50v_vatnafar_flakar_01072013")
+r <- raster(nrow=nrow(eldar),ncol=ncol(eldar))
+extent(r) <- ext_eldar
+water <- rasterize(water, r, 1, fun="first")
+writeRaster(water,file="background_map/water.img",overwrite=TRUE)
+```
