@@ -1,7 +1,7 @@
 ---
 title: "Bárðarbunga activities in a nutshell"
 author: "Einar Hjörleifsson"
-date: "13/09/2014"
+date: "17/09/2014"
 output:
   html_document:
     toc: yes
@@ -33,25 +33,62 @@ require(raster)
 The background map is generate from raster objects (see bottom of document):
 
 ```{r}
-eldar <- raster("background_map/eldar.img")
+eldar <- raster("map/eldar.img")
+ext_eldar <- extent(eldar)
+X.MIN <- ext_eldar@xmin / 1e3
+X.MAX <- ext_eldar@xmax / 1e3
+Y.MIN <- ext_eldar@ymin / 1e3
+Y.MAX <- ext_eldar@ymax / 1e3
+
+
 eldar <- rasterToPoints(eldar)
 eldar <- data.frame(eldar)
 colnames(eldar) <- c("x","y","hill")
-eldar$x <- eldar$x/1e3
-eldar$y <- eldar$y/1e3
+eldar$x <- eldar$x/1e3 - X.MIN
+eldar$y <- eldar$y/1e3 - Y.MIN
 
-water <- raster("background_map/water.img")
+water <- raster("map/water.img")
 water <- rasterToPoints(water)
 water <- data.frame(water)
-water$x <- water$x/1e3
-water$y <- water$y/1e3
+water$x <- water$x/1e3 - X.MIN
+water$y <- water$y/1e3 - Y.MIN
 
+symbol <- data.frame(x=rep(40,5),y=rep(5,5),size=1:5)
+
+attach("shapes.RData")
+
+theme_nothing2 <- function() {
+  return(theme(line = element_blank(),
+               rect = element_blank(), 
+               text = element_blank(),
+               axis.ticks.length = unit(0,"cm"),
+               axis.ticks.margin = unit(0.01, "cm"), 
+               legend.position = "none",
+               panel.margin = unit(c(0,0,0,0), "cm"),
+               plot.margin = unit(c(-1,-1,-1,-1), "cm"),
+               complete = TRUE))
+  }
 eldar_base_plot <- ggplot() +
-  theme_nothing() +
+  theme_nothing2() +
   geom_raster(data=eldar,aes(x,y,fill=hill)) +
   geom_raster(data=water,aes(x,y),fill="white",alpha=0.25) +
   scale_fill_gradientn(colours=grey(1:100/100),guide="none") +
-  coord_equal()
+  geom_polygon(data=gangur,aes(x,y),fill="white",alpha=0.05) +
+  geom_polygon(data=bunga,aes(x,y),fill="white",alpha=0.05) +
+  coord_equal() +
+  annotate("text",x=2,y=44,hjust=0,label="Base map: www.lmi.is",size=5) +
+  annotate("text",x=2,y=42.5,hjust=0,label="DATA source: www.vedur.is",size=5) +
+  annotate("text",x=2,y=40,hjust=0,label="fishvise",colour="white",size=7) +
+  annotate("text",x=2,y=35,hjust=0,label="Recent activity",colour="red",size=7) +
+  annotate("text",x=2,y=33.5,hjust=0,label="Historical trail",colour="blue",size=7) +
+  geom_point(data=symbol[symbol$size %in% c(1,3,5),],aes(x,y,size=size*6),shape=1,col="red") +
+  #scale_shape(solid=FALSE) +
+  #geom_text(data=symbol,aes(x,y+(size-1)/1.75,label=size),size=3) +
+  geom_text(data=symbol[symbol$size %in% c(1,3,5),],aes(x,y+(size-1)/1.35,label=size),size=7) +
+  annotate("segment",x=25,xend=35,y=1.5,yend=1.5) +
+  annotate("text",x=30,y=2,label="10 km") +
+  scale_size_identity()
+
 
 eldar_base_plot
 ```
@@ -82,7 +119,7 @@ get_hraun <- function(weeks,year) {
   PRO <- CRS('+proj=longlat +datum=WGS84')
   ISN94 <- CRS('+proj=lcc +lat_1=64.25 +lat_2=65.75 +lat_0=65 +lon_0=-19 +x_0=500000 +y_0=500000 +ellps=GRS80 +units=m +no_defs')
   
-  x$id <- 1:nrow(hraun)
+  x$id <- 1:nrow(x)
   x.stdf <- SpatialPointsDataFrame(x[,c('lon','lat')],
                                  x[,c('id','date')],
                                  proj4string=PRO)
@@ -93,10 +130,257 @@ get_hraun <- function(weeks,year) {
   
   return(x)
 }
+
+
+get_hraun_recent <- function() {
+  library(XML)
+  library(RCurl)
+  require(httr)
+  url <- "http://hraun.vedur.is/ja/skjalftar/skjlisti.html"
+  x2 <- GET(url)
+  x2 <- readHTMLTable(rawToChar(x2$content), stringsAsFactors = F)[[3]]
+  names(x2) <- c("date","time","lat","lon","z","size","quality","loc1","loc2","loc3")
+  require(lubridate)
+  require(stringr)
+  x2$date <- ymd_hms(paste(ymd(x2$date),str_sub(x2$time,1,8),"UTC"))
+  x2$lat <- as.numeric(str_replace(x2$lat,",","."))
+  x2$lon <- as.numeric(str_replace(x2$lon,",","."))
+  x2$z <- as.numeric(str_replace(x2$z,",","."))
+  x2$size <- as.numeric(str_replace(x2$size,",","."))
+  x2$quality <- as.numeric(str_replace(x2$quality,",","."))
+  x2$st <- paste(x2$loc,x2$loc2,x2$loc3)
+  x2 <- x2[,c("date","lon","lat","z","size","quality","st")]
+  x <- x2
+  # convert lon and lat to meters
+  require(rgdal)
+  PRO <- CRS('+proj=longlat +datum=WGS84')
+  ISN94 <- CRS('+proj=lcc +lat_1=64.25 +lat_2=65.75 +lat_0=65 +lon_0=-19 +x_0=500000 +y_0=500000 +ellps=GRS80 +units=m +no_defs')
+  
+  x$id <- 1:nrow(x)
+  x.stdf <- SpatialPointsDataFrame(x[,c('lon','lat')],
+                                   x[,c('id','date','z','size','quality','st')],
+                                   proj4string=PRO)
+  
+  x.stdf <- spTransform(x.stdf,ISN94)
+  
+  x.df <- as.data.frame(x.stdf)
+  names(x.df) <- c("id","date","z","size","quality","st","x","y")
+  x <- join(x,x.df[,c("id","x","y")])
+  }
 ```
 
 ```{r, eval=FALSE}
 haun <- get_hraun(weeks=33:37,year=2014)
+#save(hraun,file="hraun.RData")
+```
+
+```{r}
+attach("hraun.RData")
+hraun_recent <- get_hraun_recent()
+#i <- hraun_recent$date > max(hraun$date) & hraun_recent$quality >= 65
+#cn <- c("date","x","y","z","size")
+#hraun <- rbind(hraun[,cn],hraun_recent[i,cn])
+
+hraun$x <- hraun$x / 1e3 - X.MIN
+hraun$y <- hraun$y / 1e3 - Y.MIN
+
+i <- hraun$x >= 0 & hraun$x <= 45 &
+  hraun$y >= 0 & hraun$y <= 45 &
+  year(hraun$date) == 2014 & month(hraun$date) %in% c(8,9)
+d <- hraun[i,]
+d <- d[month(d$date) %in% 8 & day(d$date) >= 14 | month(d$date) == 9,]
+d <- d[d$size > 0,]
+minute(d$date) <- second(d$date) <- 0
+
+# define bunga and gangur
+d$area <- NA
+require(geo)
+i <- geoinside(d,gangur,col.names = c("y","x"),option = 3)
+d$area[i==1] <- "Dyke"
+i <- geoinside(d,bunga,col.names=c("y","x"),option=3)
+d$area[i==1] <- "Bárðarbunga"
+Time <- min(d$date)
+for (i in 1:1000) Time <- c(Time,Time[i]+hours(1))
+Time <- Time[Time <= max(d$date)]
+file_name <- str_sub(as.character(Time),1,16)
+```
+
+
+```{r}
+plot_eldar <- function(d,i,Time) {
+  # Add historical trail, all earthquakes up to now
+  p <- eldar_base_plot + 
+    geom_point(data=d[d$date <= Time[i],],aes(x,y),size=2,col="blue",alpha=0.3)
+  
+  # Fade out the last 10 hours
+  x <- d[d$date %in% c(Time[max(1,i-9)]:Time[i]),]
+  x <- x[order(x$date,decreasing=TRUE),]  
+  Dates <- data.frame(date=unique(x$date))
+  Dates$fade <- rev(as.numeric(max(Dates$date) - Dates$date) / (60*60))/10 + 0.1
+  x <- join(x,Dates,by="date")
+  
+  # only plot size >= 1 for the recent activity
+  j <- x$size >= 0
+  if(any(j))  {
+      p <- p + 
+        geom_point(data=x[j,],aes(x,y,alpha=fade,size=size*6),shape=1,col="red") 
+        #scale_size_identity() +
+        #scale_shape(solid = FALSE)
+      p <- p + geom_point(data=x[j,],aes(x,y,alpha=fade,size=size),col="red")
+  }
+
+  p <- p + annotate("text",x=2,y=37,hjust=0,label=file_name[i],size=10,col="white")
+  return(p)
+  }
+
+
+plot_depth_x <- function(d,i,Time) {
+  p <- ggplot() +
+    theme_nothing2() +
+    coord_equal()
+  d$z <- ifelse(d$z > 20,20,d$z)
+  p <- p + geom_point(data=d[d$date <= Time[i],],aes(x,-z),size=2,col="blue",alpha=0.3)
+  # Fade out the last 10 hours
+  x <- d[d$date %in% c(Time[max(1,i-9)]:Time[i]),]
+  x <- x[order(x$date,decreasing=TRUE),]
+  Dates <- data.frame(date=unique(x$date))
+  Dates$fade <- rev(as.numeric(max(Dates$date) - Dates$date) / (60*60))/10 + 0.1
+  x <- join(x,Dates,by="date")
+  # only plot size >= 1 for the recent activity
+  j <- x$size >= 0
+  if(any(j))  {
+    p <- p +
+      geom_point(data=x[j,],aes(x,-z,alpha=fade,size=size*6),shape=1,col="red")
+    p <- p + geom_point(data=x[j,],aes(x,-z,alpha=fade,size=size),col="red")
+    }
+  p <- p + scale_size_identity() + labs(x="",y="") + theme(legend.position="none")
+  p <- p + scale_x_continuous(limits=c(0 ,45)) +
+    scale_y_continuous(limits=c(-20,0))
+  p <- p + annotate("segment", x = 0, xend = 0, y = 0, yend = -20, colour = "black")
+  p <- p + annotate("text",x=0.5,y=0,hjust=0,label="0 km",size=5)
+  p <- p + annotate("text",x=0.5,y=-5,hjust=0,label="5 km",size=5)
+  p <- p + annotate("text",x=0.5,y=-10,hjust=0,label="10 km",size=5)
+  p <- p + annotate("text",x=0.5,y=-15,hjust=0,label="15 km",size=5)
+  p <- p + annotate("text",x=0.5,y=-20,hjust=0,label="20 km",size=5) #+
+   #theme(panel.margin = unit(0, "cm"))
+  return(p)
+  }
+plot_depth_x(d,300,Time) + coord_equal()
+
+plot_depth_y <- function(d,i,Time) {
+  p <- ggplot() +
+    theme_nothing2() +
+    coord_equal()
+  d$z <- ifelse(d$z > 20,20,d$z)  
+  p <- p + geom_point(data=d[d$date <= Time[i],],aes(z,y),size=2,col="blue",alpha=0.3)
+  
+  # Fade out the last 10 hours
+  x <- d[d$date %in% c(Time[max(1,i-9)]:Time[i]),]
+  x <- x[order(x$date,decreasing=TRUE),]  
+  Dates <- data.frame(date=unique(x$date))
+  Dates$fade <- rev(as.numeric(max(Dates$date) - Dates$date) / (60*60))/10 + 0.1
+  x <- join(x,Dates,by="date")
+  
+  # only plot size >= 1 for the recent activity
+  j <- x$size >= 0
+  if(any(j))  {
+      p <- p + 
+        geom_point(data=x[j,],aes(z,y,alpha=fade,size=size*6),shape=1,col="red") 
+      p <- p + geom_point(data=x[j,],aes(z,y,alpha=fade,size=size),col="red")
+  }
+  p <- p + scale_size_identity() #+ labs(x="",y="") + theme(legend.position="none")
+  p <- p + scale_x_continuous(limits=c(0,20)) +
+    scale_y_continuous(limits=c(0,45)) 
+  p <- p + annotate("segment", x = 0, xend = 20, y = 0, yend = 0, colour = "black")
+  p <- p + annotate("text",x=0,y=0.5,hjust=0,label="0 km",size=5,angle=90)
+  p <- p + annotate("text",x=5,y=0.5,hjust=0,label="5 km",size=5,angle=90)
+  p <- p + annotate("text",x=10,y=0.5,hjust=0,label="10 km",size=5,angle=90)
+  p <- p + annotate("text",x=15,y=0.5,hjust=0,label="15 km",size=5,angle=90)
+  p <- p + annotate("text",x=20,y=0.5,hjust=0,label="20 km",size=5,angle=90) 
+  return(p)
+  }
+
+plot_activity <- function(d,i,Time) {
+  Days <- Time
+  hour(Days) <- 0
+  Days <- unique(Days)
+  
+  dummy <- data.frame(date=rep(max(Days),2),n=c(271,75),area=c("Dyke","Bárðarbunga"))
+  
+  dummy_label <- data.frame(date=rep(max(Days)),n=c(265,70),area=c("Dyke","Bárðarbunga"))
+
+  x <- d[d$date <= Time[i] & d$area %in% c("Dyke","Bárðarbunga"),]
+  hour(x$date) <- 0
+
+  x0 <- ddply(x,c("date","area"),summarise,n=length(date))
+  x3 <- ddply(x[x$size >= 3,],c("date","area"),summarise,n=length(date))
+  p <- ggplot() + 
+    scale_x_datetime(limits=c(min(Days),max(Days))) +
+    geom_linerange(data=dummy,aes(date,ymin=0,ymax=n),col="white",alpha=0.01)  +
+    geom_linerange(data=x0,aes(date,ymin=0,ymax=n),col="grey",lwd=3)  +
+    #theme_bw() +
+    facet_grid(area ~ .,scale="free_y") +
+    geom_text(data=dummy_label,aes(date,n,label=area),hjust=1,size=7) +
+    theme(line = element_blank(),
+          rect = element_blank(),
+          #text = element_blank(),
+          #axis.ticks.length = unit(0, "cm"),
+          #axis.ticks.margin = unit(0.01, "cm"), 
+          legend.position = "none",
+          #panel.margin = unit(0, "lines"),
+          plot.margin = unit(c(0, 0, -0.5, -0.5), "lines"),
+          axis.text = element_text(size = 12),
+          axis.text = element_text(size = 12),
+          complete = TRUE) +
+    labs(x="",y="",title="Quakes per day. Red: quakes >=3")
+  if(nrow(x3) !=0) p <- p + geom_linerange(data=x3,aes(date,ymin=0,ymax=n),col="red",lwd=3) 
+  return(p)
+  }
+```
+
+
+## The view
+
+```{r, eval=FALSE}
+library(grid)
+vplayout <- function(x, y) viewport(layout.pos.row = x, layout.pos.col = y)
+
+i <- 700
+jpeg(filename="test.jpg",width=950,height=950,bg="white")
+grid.newpage()
+pushViewport(viewport(layout = grid.layout(nrow=2,ncol=2,
+                                           widths=c(0.6923077,1-0.6923077),
+                                           heights=c(0.6923077,1-0.6923077),
+                                           just=c("left","bottom"))))
+print(plot_eldar(d,i,Time), vp = vplayout(1, 1))
+print(plot_depth_x(d,i,Time), vp = vplayout(2,1))
+print(plot_depth_y(d,i,Time), vp = vplayout(1,2))
+print(plot_activity(d,i,Time),vp = vplayout(2,2))
+dev.off()
+
+
+
+
+for (i in 1:length(Time)) {
+  jpeg(filename=paste("fig/",file_name[i],".jpg",sep=""),width=950,height=950,bg="white")
+  grid.newpage()
+  pushViewport(viewport(layout = grid.layout(nrow=2,ncol=2,
+                                             widths=c(0.6923077,1-0.6923077),
+                                             heights=c(0.6923077,1-0.6923077),
+                                             just=c("left","bottom"))))
+  print(plot_eldar(d,i,Time), vp = vplayout(1, 1))
+  print(plot_depth_x(d,i,Time), vp = vplayout(2,1))
+  print(plot_depth_y(d,i,Time), vp = vplayout(1,2))
+  print(plot_activity(d,i,Time),vp = vplayout(2,2))
+  dev.off()
+  }
+  
+
+
+```
+
+```{r, eval=FALSE}
+system("convert -delay 15 *.jpg bunga_august.mp4")
 ```
 
 
@@ -116,4 +400,56 @@ r <- raster(nrow=nrow(eldar),ncol=ncol(eldar))
 extent(r) <- ext_eldar
 water <- rasterize(water, r, 1, fun="first")
 writeRaster(water,file="background_map/water.img",overwrite=TRUE)
+```
+
+
+# area defintion
+```{r}
+GANGUR <- data.frame(lon=c(-17.45262,-17.26731,-16.91901,-16.96143,-16.82971,-16.74040),
+                     lat=c( 64.64699, 64.58418, 64.72902, 64.74184, 64.88540, 65.02768))
+GANGUR <- GANGUR[2:5,]
+PRO <- CRS('+proj=longlat +datum=WGS84')
+ISN94 <- CRS('+proj=lcc +lat_1=64.25 +lat_2=65.75 +lat_0=65 +lon_0=-19 +x_0=500000 +y_0=500000 +ellps=GRS80 +units=m +no_defs')
+
+GANGUR$id <- 1:nrow(GANGUR)
+GANGUR$name <- c("Bunga","g1_start","g1_end","g2_start","g2_end","askja")
+
+# trial
+#   make points along the line
+GANGUR.l <- Line(GANGUR[,c('lon','lat')])
+GANGUR.sl <- SpatialLines(list(Lines(GANGUR.l,ID='gangur')),proj4string=PRO)
+GANGUR.pt <- spsample(GANGUR.sl,n=1000,type='regular')
+GANGUR.df <- as.data.frame(coordinates(GANGUR.pt))
+GANGUR.df$id <- GANGUR.df$name <- 1:nrow(GANGUR.df)
+GANGUR.stdf <- SpatialPointsDataFrame(GANGUR.df[,c('lon','lat')],
+                                 GANGUR.df[,c('id','name')],
+                                 proj4string=PRO)
+GANGUR.stdf <- spTransform(GANGUR.stdf,ISN94)
+require(rgeos)
+GANGUR.stdf <- gBuffer(GANGUR.stdf,width =  2500,quadsegs=100)
+gangur <- fortify(GANGUR.stdf)
+gangur <- gangur[gangur$group %in% "buffer.1", c("long","lat")]
+names(gangur) <- c("x","y")
+gangur$x <- gangur$x/1e3 - x.min
+gangur$y <- gangur$y/1e3 - y.min
+eldar_base_plot + geom_path(data=gangur,aes(x,y))
+
+BUNGA <- data.frame(x=c(571344.5,574470.3),y=c(458781.6,461355.7))
+BUNGA.l <- Line(BUNGA[,c('x','y')])
+BUNGA.sl <- SpatialLines(list(Lines(BUNGA.l,ID='bunga')),proj4string=ISN94)
+BUNGA.pt <- spsample(BUNGA.sl,n=1000,type='regular')
+BUNGA.df <- as.data.frame(coordinates(BUNGA.pt))
+BUNGA.df$id <- BUNGA.df$name <- 1:nrow(BUNGA.df)
+BUNGA.stdf <- SpatialPointsDataFrame(BUNGA.df[,c('x','y')],
+                                 BUNGA.df[,c('id','name')],
+                                 proj4string=ISN94)
+BUNGA.stdf <- gBuffer(BUNGA.stdf,width =  7000,quadsegs=100)
+bunga <- fortify(BUNGA.stdf)
+bunga <- bunga[, c("long","lat")]
+names(bunga) <- c("x","y")
+bunga$x <- bunga$x/1e3 - x.min
+bunga$y <- bunga$y/1e3 - y.min
+eldar_base_plot + geom_path(data=gangur,aes(x,y)) + geom_path(data=bunga,aes(x,y))
+
+save(gangur,bunga,file="shapes.RData")
 ```
