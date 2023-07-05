@@ -1,0 +1,141 @@
+---
+title: "Reykjaneseldar"
+format: html
+editor: source
+fig-width: 9
+fig-height: 6
+embed-resources: true
+---
+
+```{r, echo = FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+```
+
+```{r}
+# https://erdbebennews.de/2022/08/island-erdbebenschwarm-analyse1/
+library(raster)
+library(sf)
+library(stars)
+library(RcppRoll)
+library(tidyverse)
+library(lubridate)
+library(gganimate)
+library(jsonlite)
+library(httr)
+library(mapview)
+library(mapedit)
+source("R/read_hraun.R")
+
+T1 <- ymd("2021-03-19")  # first eruption
+T2 <- ymd("2022-08-03")  # second eruption
+xmin <- -22.6
+xmax <- -21.9 #-22.1
+ymin <-  63.8
+ymax <-  63.975
+month1 <-
+  tibble(t1 = seq(ymd("2021-01-01"), ymd("2023-08-01"), by = "1 month")) %>%
+  mutate(t2 = ceiling_date(t1, unit = "month"),
+         x = 1:n(),
+         even = ifelse(x %% 2 == 0, TRUE, FALSE))
+
+#DYKE <-
+#  read_rds("dyke.rds") %>%
+#  mutate(in.dyke = TRUE) %>%
+#  select(in.dyke) %>%
+#  st_transform(crs = 4326)
+#write_sf(DYKE, "background_map/fagradalsfjall_dyke.gpkg")
+DYKE <- read_sf("background_map/fagradalsfjall_dyke.gpkg")
+baseplot <-
+  ggplot() +
+  theme_bw(base_size = 16) +
+  geom_vline(xintercept = c(T1, T2), lwd = 1, colour = "grey") +
+  annotate("text", x = c(T1, T2), y = Inf, label = "gos", angle = 90,
+           hjust = "inward") +
+  geom_rect(data = month1,
+            aes(xmin = t1,
+                xmax = t2,
+                ymin = -Inf,
+                ymax = Inf,
+                fill = even),
+            alpha = 0.025) +
+  scale_x_date(date_breaks = "3 months",
+               minor_breaks = "months",
+               date_labels = "%m-%y",
+               expand = c(0, 0)) +
+  theme(legend.position = "none") +
+  scale_fill_brewer(palette = "Set1") +
+  scale_colour_brewer(palette = "Set1")
+
+
+RAW <- read_hraun(year = 2021:2023)
+d <-
+  RAW %>%
+  dplyr::filter(between(lon, xmin, xmax),
+                between(lat, ymin, ymax),
+                size >= 0,
+                (q >= 90 | yfirfarinn)) %>%
+  mutate(date = floor_date(time, unit = "day"),
+         date = as_date(date),
+         size = ifelse(size >= 5, 4.999, size),
+         z = ifelse(z >= 20, 19.99, z),
+         s2 = cut(size, breaks = c(0, 1, 2, 3, 4, 6), include.lowest = TRUE),
+         z2 = cut(z, breaks = c(0, 2.5, 5, 7.5, 10, 15, 20), include.lowest = TRUE)) %>%
+  st_as_sf(coords = c("lon", "lat"),
+           crs = 4326,
+           remove = FALSE) %>%
+  st_join(DYKE) %>%
+  st_drop_geometry() %>%
+  mutate(in.dyke = replace_na(in.dyke, FALSE))
+d %>%
+  group_by(date) %>%
+  count() %>%
+  ggplot(aes(date, n)) +
+  geom_point(size = 1) +
+  geom_vline(xintercept = c(T1, T2))
+
+
+n.by.yfirfarinn <-
+  d %>%
+  group_by(date, yfirfarinn, s2) %>%
+  count()
+baseplot +
+  geom_col(data = n.by.yfirfarinn,
+           aes(date, n, fill = yfirfarinn)) +
+  facet_grid(s2 ~ ., scales = "free_y") +
+  expand_limits(y = 0) +
+  labs(x = NULL, y = "Fjöldi skjálfta / 24 klst",
+       subtitle = 'Reykjaneseldar: Fjöldi skjálfta eftir stærð',
+       caption = "Heimildir: http://hraun.vedur.is/ja/viku, \nhttps://www.vedur.is/skjalftar-og-eldgos/jardskjalftar#view=table,\nRautt: Óyfirfarið")
+n.by.dyke <-
+  d %>%
+  group_by(date, in.dyke, s2) %>%
+  count()
+baseplot +
+  geom_col(data = n.by.dyke,
+           aes(date, n, fill = in.dyke)) +
+  geom_point(data = n.by.dyke,
+             aes(date, n, colour = in.dyke),
+             size = 0.5) +
+  facet_grid(s2 ~ ., scales = "free_y") +
+  expand_limits(y = 0) +
+  labs(x = NULL, y = "Fjöldi skjálfta / 24 klst",
+       subtitle = 'Reykjaneseldar: Fjöldi og stærð skjálfta',
+       caption = "Heimildir: http://hraun.vedur.is/ja/viku, \nhttps://www.vedur.is/skjalftar-og-eldgos/jardskjalftar#view=table,\nBlátt: In dyke")
+
+z.by.dyke <-
+  d %>%
+  group_by(date, s2) %>%
+  mutate(n.per.day = n()) %>%
+  ungroup() %>%
+  filter(n.per.day > 5)
+baseplot +
+  stat_summary(data = z.by.dyke,
+               aes(date, -z, colour = in.dyke),
+               fun.data = "mean_cl_boot",
+               size = 0.1) +
+  facet_grid(s2 ~ .) +
+  scale_y_continuous(limits = c(-7, 0)) +
+  scale_colour_brewer(palette = "Set1")
+
+
+```
